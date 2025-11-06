@@ -1,0 +1,9 @@
+rules:
+  - rule_id: aws.ec2.rightsize
+    version: 1
+    scope: ec2
+    description: EC2 인스턴스 타입 다운사이징 제안
+  - rule_id: aws.ec2.idle_time
+    version: 1
+    scope: ec2
+    description: 비활성 시간 과다 시 절감 계산
