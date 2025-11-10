@@ -1,9 +1,16 @@
 import os
+import uuid
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Optional
+from dotenv import load_dotenv
 import google.generativeai as genai
+
+# .env 파일 로드 (프로젝트 루트에서)
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 app = FastAPI(title="BudgetOps AI Chat API")
 
@@ -19,26 +26,32 @@ app.add_middleware(
 # Gemini API 설정
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
+    raise ValueError(
+        "GEMINI_API_KEY 환경 변수가 설정되지 않았습니다."
+    )
 
 genai.configure(api_key=GEMINI_API_KEY)
 
 # 모델 초기화
-model = genai.GenerativeModel('gemini-pro')
+MODEL_NAME = os.getenv("GEMINI_MODEL_NAME")
+model = genai.GenerativeModel(MODEL_NAME)
 
-
-class ChatMessage(BaseModel):
-    role: str  # "user" or "assistant"
-    content: str
+# 세션 저장소 (메모리 기반, 프로덕션에서는 Redis나 DB 사용 권장)
+chat_sessions: dict[str, genai.ChatSession] = {}
 
 
 class ChatRequest(BaseModel):
     message: str
-    history: Optional[List[ChatMessage]] = None
+    session_id: Optional[str] = None  # 세션 ID가 없으면 새 세션 생성
 
 
 class ChatResponse(BaseModel):
     response: str
+    session_id: str
+
+
+class SessionResponse(BaseModel):
+    session_id: str
 
 
 @app.get("/api/ai/health")
@@ -49,33 +62,52 @@ async def root():
 @app.post("/api/ai/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
-    채팅 메시지를 받아서 Gemini API로 처리하고 응답을 반환합니다.
-    히스토리가 있으면 대화 맥락을 유지합니다.
+    사용자 질의를 받아서 Gemini API로 처리하고 응답 반환
+    session_id가 제공되면 기존 세션을 사용, 없으면 새 세션 생성
     """
     try:
-        # 대화 히스토리 구성
-        history = []
-        if request.history:
-            for msg in request.history:
-                # Gemini API 형식에 맞게 히스토리 구성
-                if msg.role == "user":
-                    history.append({"role": "user", "parts": [msg.content]})
-                elif msg.role == "assistant":
-                    history.append({"role": "model", "parts": [msg.content]})
-        
-        # 채팅 세션 시작
-        if history:
-            chat = model.start_chat(history=history)
+        # 세션 ID가 없거나 존재하지 않으면 새 세션 생성
+        if not request.session_id or request.session_id not in chat_sessions:
+            session_id = str(uuid.uuid4())
+            chat_session = model.start_chat(history=[])
+            chat_sessions[session_id] = chat_session
         else:
-            chat = model.start_chat(history=[])
+            session_id = request.session_id
+            chat_session = chat_sessions[session_id]
         
-        # 현재 메시지 전송
-        response = chat.send_message(request.message)
+        # 메시지 전송
+        response = chat_session.send_message(request.message)
         
-        return ChatResponse(response=response.text)
+        return ChatResponse(
+            response=response.text,
+            session_id=session_id
+        )
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"채팅 처리 중 오류가 발생했습니다: {str(e)}")
+
+
+@app.post("/api/ai/chat/session", response_model=SessionResponse)
+async def create_session():
+    """
+    새로운 채팅 세션 생성
+    """
+    session_id = str(uuid.uuid4())
+    chat_session = model.start_chat(history=[])
+    chat_sessions[session_id] = chat_session
+    return SessionResponse(session_id=session_id)
+
+
+@app.delete("/api/ai/chat/session/{session_id}")
+async def delete_session(session_id: str):
+    """
+    채팅 세션 삭제
+    """
+    if session_id in chat_sessions:
+        del chat_sessions[session_id]
+        return {"message": "세션이 삭제되었습니다."}
+    else:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
 
 
 if __name__ == "__main__":
