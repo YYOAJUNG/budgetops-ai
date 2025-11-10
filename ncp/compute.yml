@@ -1,0 +1,5 @@
+rules:
+  - rule_id: ncp.compute.rightsize
+    version: 1
+    scope: compute
+    description: NCP 컴퓨트 다운사이징 제안
