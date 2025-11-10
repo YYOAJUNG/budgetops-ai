@@ -34,6 +34,9 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 # 모델 초기화
 MODEL_NAME = os.getenv("GEMINI_MODEL_NAME")
+SYSTEM_INSTRUCTION = os.getenv("GEMINI_SYSTEM_INSTRUCTION")
+
+# 모델 생성 (system_instruction은 start_chat에서 전달)
 model = genai.GenerativeModel(MODEL_NAME)
 
 # 세션 저장소 (메모리 기반, 프로덕션에서는 Redis나 DB 사용 권장)
@@ -69,7 +72,18 @@ async def chat(request: ChatRequest):
         # 세션 ID가 없거나 존재하지 않으면 새 세션 생성
         if not request.session_id or request.session_id not in chat_sessions:
             session_id = str(uuid.uuid4())
-            chat_session = model.start_chat(history=[])
+            # system_instruction이 있으면 히스토리에 시스템 메시지로 추가
+            history = []
+            if SYSTEM_INSTRUCTION:
+                history.append({
+                    "role": "user",
+                    "parts": [SYSTEM_INSTRUCTION]
+                })
+                history.append({
+                    "role": "model",
+                    "parts": ["알겠습니다. 시스템 지시사항을 확인했습니다."]
+                })
+            chat_session = model.start_chat(history=history)
             chat_sessions[session_id] = chat_session
         else:
             session_id = request.session_id
@@ -93,7 +107,18 @@ async def create_session():
     새로운 채팅 세션 생성
     """
     session_id = str(uuid.uuid4())
-    chat_session = model.start_chat(history=[])
+    # system_instruction이 있으면 히스토리에 시스템 메시지로 추가
+    history = []
+    if SYSTEM_INSTRUCTION:
+        history.append({
+            "role": "user",
+            "parts": [SYSTEM_INSTRUCTION]
+        })
+        history.append({
+            "role": "model",
+            "parts": ["알겠습니다. 시스템 지시사항을 확인했습니다."]
+        })
+    chat_session = model.start_chat(history=history)
     chat_sessions[session_id] = chat_session
     return SessionResponse(session_id=session_id)
 
